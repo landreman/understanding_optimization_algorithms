@@ -98,16 +98,8 @@ from numpy.linalg import norm
 from scipy.linalg import svd
 from scipy.optimize import OptimizeResult
 
-from scipy.optimize._lsq.common import (
-    solve_lsq_trust_region,
-    evaluate_quadratic,
-    compute_grad,
-    compute_jac_scale,
-    check_termination,
-    update_tr_radius,
-    print_header_nonlinear,
-    print_iteration_nonlinear,
-)
+
+EPS = np.finfo(float).eps
 
 TERMINATION_MESSAGES = {
     -2: "Stopped because `callback` function raised `StopIteration` or returned `True`",
@@ -118,6 +110,245 @@ TERMINATION_MESSAGES = {
     3: "`xtol` termination condition is satisfied.",
     4: "Both `ftol` and `xtol` termination conditions are satisfied.",
 }
+
+def solve_lsq_trust_region(n, m, uf, s, V, Delta, initial_alpha=None,
+                           rtol=0.01, max_iter=10):
+    """Solve a trust-region problem arising in least-squares minimization.
+
+    This function implements a method described by J. J. More [1]_ and used
+    in MINPACK, but it relies on a single SVD of Jacobian instead of series
+    of Cholesky decompositions. Before running this function, compute:
+    ``U, s, VT = svd(J, full_matrices=False)``.
+
+    Parameters
+    ----------
+    n : int
+        Number of variables.
+    m : int
+        Number of residuals.
+    uf : ndarray
+        Computed as U.T.dot(f).
+    s : ndarray
+        Singular values of J.
+    V : ndarray
+        Transpose of VT.
+    Delta : float
+        Radius of a trust region.
+    initial_alpha : float, optional
+        Initial guess for alpha, which might be available from a previous
+        iteration. If None, determined automatically.
+    rtol : float, optional
+        Stopping tolerance for the root-finding procedure. Namely, the
+        solution ``p`` will satisfy ``abs(norm(p) - Delta) < rtol * Delta``.
+    max_iter : int, optional
+        Maximum allowed number of iterations for the root-finding procedure.
+
+    Returns
+    -------
+    p : ndarray, shape (n,)
+        Found solution of a trust-region problem.
+    alpha : float
+        Positive value such that (J.T*J + alpha*I)*p = -J.T*f.
+        Sometimes called Levenberg-Marquardt parameter.
+    n_iter : int
+        Number of iterations made by root-finding procedure. Zero means
+        that Gauss-Newton step was selected as the solution.
+
+    References
+    ----------
+    .. [1] More, J. J., "The Levenberg-Marquardt Algorithm: Implementation
+           and Theory," Numerical Analysis, ed. G. A. Watson, Lecture Notes
+           in Mathematics 630, Springer Verlag, pp. 105-116, 1977.
+    """
+    def phi_and_derivative(alpha, suf, s, Delta):
+        """Function of which to find zero.
+
+        It is defined as "norm of regularized (by alpha) least-squares
+        solution minus `Delta`". Refer to [1]_.
+        """
+        denom = s**2 + alpha
+        p_norm = norm(suf / denom)
+        phi = p_norm - Delta
+        phi_prime = -np.sum(suf ** 2 / denom**3) / p_norm
+        return phi, phi_prime
+
+    suf = s * uf
+
+    # Check if J has full rank and try Gauss-Newton step.
+    if m >= n:
+        threshold = EPS * m * s[0]
+        full_rank = s[-1] > threshold
+    else:
+        full_rank = False
+
+    if full_rank:
+        p = -V.dot(uf / s)
+        if norm(p) <= Delta:
+            return p, 0.0, 0
+
+    alpha_upper = norm(suf) / Delta
+
+    if full_rank:
+        phi, phi_prime = phi_and_derivative(0.0, suf, s, Delta)
+        alpha_lower = -phi / phi_prime
+    else:
+        alpha_lower = 0.0
+
+    if initial_alpha is None or not full_rank and initial_alpha == 0:
+        alpha = max(0.001 * alpha_upper, (alpha_lower * alpha_upper)**0.5)
+    else:
+        alpha = initial_alpha
+
+    for it in range(max_iter):
+        if alpha < alpha_lower or alpha > alpha_upper:
+            alpha = max(0.001 * alpha_upper, (alpha_lower * alpha_upper)**0.5)
+
+        phi, phi_prime = phi_and_derivative(alpha, suf, s, Delta)
+
+        if phi < 0:
+            alpha_upper = alpha
+
+        ratio = phi / phi_prime
+        alpha_lower = max(alpha_lower, alpha - ratio)
+        alpha -= (phi + Delta) * ratio / Delta
+
+        if np.abs(phi) < rtol * Delta:
+            break
+
+    p = -V.dot(suf / (s**2 + alpha))
+
+    # Make the norm of p equal to Delta, p is changed only slightly during
+    # this. It is done to prevent p lie outside the trust region (which can
+    # cause problems later).
+    p *= Delta / norm(p)
+
+    return p, alpha, it + 1
+
+
+def evaluate_quadratic(J, g, s, diag=None):
+    """Compute values of a quadratic function arising in least squares.
+
+    The function is 0.5 * s.T * (J.T * J + diag) * s + g.T * s.
+
+    Parameters
+    ----------
+    J : ndarray, sparse array or LinearOperator, shape (m, n)
+        Jacobian matrix, affects the quadratic term.
+    g : ndarray, shape (n,)
+        Gradient, defines the linear term.
+    s : ndarray, shape (k, n) or (n,)
+        Array containing steps as rows.
+    diag : ndarray, shape (n,), optional
+        Addition diagonal part, affects the quadratic term.
+        If None, assumed to be 0.
+
+    Returns
+    -------
+    values : ndarray with shape (k,) or float
+        Values of the function. If `s` was 2-D, then ndarray is
+        returned, otherwise, float is returned.
+    """
+    if s.ndim == 1:
+        Js = J.dot(s)
+        q = np.dot(Js, Js)
+        if diag is not None:
+            q += np.dot(s * diag, s)
+    else:
+        Js = J.dot(s.T)
+        q = np.sum(Js**2, axis=0)
+        if diag is not None:
+            q += np.sum(diag * s**2, axis=1)
+
+    l = np.dot(s, g)
+
+    return 0.5 * q + l
+
+
+def compute_grad(J, f):
+    """Compute gradient of the least-squares cost function."""
+    # if isinstance(J, LinearOperator):
+    #     return J.rmatvec(f)
+    # else:
+    #     return J.T.dot(f)
+    return J.T.dot(f)
+
+
+def compute_jac_scale(J, scale_inv_old=None):
+    """Compute variables scale based on the Jacobian matrix."""
+    # if issparse(J):
+    #     scale_inv = np.asarray(J.power(2).sum(axis=0)).ravel()**0.5
+    # else:
+    #     scale_inv = np.sum(J**2, axis=0)**0.5
+    scale_inv = np.sum(J**2, axis=0)**0.5
+
+    if scale_inv_old is None:
+        scale_inv[scale_inv == 0] = 1
+    else:
+        scale_inv = np.maximum(scale_inv, scale_inv_old)
+
+    return 1 / scale_inv, scale_inv
+
+
+def check_termination(dF, F, dx_norm, x_norm, ratio, ftol, xtol):
+    """Check termination condition for nonlinear least squares."""
+    ftol_satisfied = dF < ftol * F and ratio > 0.25
+    xtol_satisfied = dx_norm < xtol * (xtol + x_norm)
+
+    if ftol_satisfied and xtol_satisfied:
+        return 4
+    elif ftol_satisfied:
+        return 2
+    elif xtol_satisfied:
+        return 3
+    else:
+        return None
+    
+
+def update_tr_radius(Delta, actual_reduction, predicted_reduction,
+                     step_norm, bound_hit):
+    """Update the radius of a trust region based on the cost reduction.
+
+    Returns
+    -------
+    Delta : float
+        New radius.
+    ratio : float
+        Ratio between actual and predicted reductions.
+    """
+    if predicted_reduction > 0:
+        ratio = actual_reduction / predicted_reduction
+    elif predicted_reduction == actual_reduction == 0:
+        ratio = 1
+    else:
+        ratio = 0
+
+    if ratio < 0.25:
+        Delta = 0.25 * step_norm
+    elif ratio > 0.75 and bound_hit:
+        Delta *= 2.0
+
+    return Delta, ratio
+
+
+def print_header_nonlinear():
+    print("{:^15}{:^15}{:^15}{:^15}{:^15}{:^15}"
+          .format("Iteration", "Total nfev", "Cost", "Cost reduction",
+                  "Step norm", "Optimality"))
+
+
+def print_iteration_nonlinear(iteration, nfev, cost, cost_reduction,
+                              step_norm, optimality):
+    if cost_reduction is None:
+        cost_reduction = " " * 15
+    else:
+        cost_reduction = f"{cost_reduction:^15.2e}"
+
+    if step_norm is None:
+        step_norm = " " * 15
+    else:
+        step_norm = f"{step_norm:^15.2e}"
+
+    print(f"{iteration:^15}{nfev:^15}{cost:^15.4e}{cost_reduction}{step_norm}{optimality:^15.2e}")
 
 
 def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
