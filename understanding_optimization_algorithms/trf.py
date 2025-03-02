@@ -1,3 +1,11 @@
+"""
+This file contains the trust-region-reflective algorithm from scipy.optimize,
+but with some of the bells and whistles removed to make it easier to understand:
+* No box constraints.
+* No sparse linear algebra.
+* No loss functions.
+"""
+
 """Trust Region Reflective algorithm for least-squares optimization.
 
 The algorithm is based on ideas from paper [STIR]_. The main idea is to
@@ -111,8 +119,10 @@ TERMINATION_MESSAGES = {
     4: "Both `ftol` and `xtol` termination conditions are satisfied.",
 }
 
-def solve_lsq_trust_region(n, m, uf, s, V, Delta, initial_alpha=None,
-                           rtol=0.01, max_iter=10):
+
+def solve_lsq_trust_region(
+    n, m, uf, s, V, Delta, initial_alpha=None, rtol=0.01, max_iter=10
+):
     """Solve a trust-region problem arising in least-squares minimization.
 
     This function implements a method described by J. J. More [1]_ and used
@@ -160,6 +170,7 @@ def solve_lsq_trust_region(n, m, uf, s, V, Delta, initial_alpha=None,
            and Theory," Numerical Analysis, ed. G. A. Watson, Lecture Notes
            in Mathematics 630, Springer Verlag, pp. 105-116, 1977.
     """
+
     def phi_and_derivative(alpha, suf, s, Delta):
         """Function of which to find zero.
 
@@ -169,7 +180,7 @@ def solve_lsq_trust_region(n, m, uf, s, V, Delta, initial_alpha=None,
         denom = s**2 + alpha
         p_norm = norm(suf / denom)
         phi = p_norm - Delta
-        phi_prime = -np.sum(suf ** 2 / denom**3) / p_norm
+        phi_prime = -np.sum(suf**2 / denom**3) / p_norm
         return phi, phi_prime
 
     suf = s * uf
@@ -195,13 +206,13 @@ def solve_lsq_trust_region(n, m, uf, s, V, Delta, initial_alpha=None,
         alpha_lower = 0.0
 
     if initial_alpha is None or not full_rank and initial_alpha == 0:
-        alpha = max(0.001 * alpha_upper, (alpha_lower * alpha_upper)**0.5)
+        alpha = max(0.001 * alpha_upper, (alpha_lower * alpha_upper) ** 0.5)
     else:
         alpha = initial_alpha
 
     for it in range(max_iter):
         if alpha < alpha_lower or alpha > alpha_upper:
-            alpha = max(0.001 * alpha_upper, (alpha_lower * alpha_upper)**0.5)
+            alpha = max(0.001 * alpha_upper, (alpha_lower * alpha_upper) ** 0.5)
 
         phi, phi_prime = phi_and_derivative(alpha, suf, s, Delta)
 
@@ -264,22 +275,9 @@ def evaluate_quadratic(J, g, s, diag=None):
     return 0.5 * q + l
 
 
-def compute_grad(J, f):
-    """Compute gradient of the least-squares cost function."""
-    # if isinstance(J, LinearOperator):
-    #     return J.rmatvec(f)
-    # else:
-    #     return J.T.dot(f)
-    return J.T.dot(f)
-
-
 def compute_jac_scale(J, scale_inv_old=None):
     """Compute variables scale based on the Jacobian matrix."""
-    # if issparse(J):
-    #     scale_inv = np.asarray(J.power(2).sum(axis=0)).ravel()**0.5
-    # else:
-    #     scale_inv = np.sum(J**2, axis=0)**0.5
-    scale_inv = np.sum(J**2, axis=0)**0.5
+    scale_inv = np.sum(J**2, axis=0) ** 0.5
 
     if scale_inv_old is None:
         scale_inv[scale_inv == 0] = 1
@@ -302,10 +300,11 @@ def check_termination(dF, F, dx_norm, x_norm, ratio, ftol, xtol):
         return 3
     else:
         return None
-    
 
-def update_tr_radius(Delta, actual_reduction, predicted_reduction,
-                     step_norm, bound_hit):
+
+def update_tr_radius(
+    Delta, actual_reduction, predicted_reduction, step_norm, bound_hit
+):
     """Update the radius of a trust region based on the cost reduction.
 
     Returns
@@ -331,13 +330,21 @@ def update_tr_radius(Delta, actual_reduction, predicted_reduction,
 
 
 def print_header_nonlinear():
-    print("{:^15}{:^15}{:^15}{:^15}{:^15}{:^15}"
-          .format("Iteration", "Total nfev", "Cost", "Cost reduction",
-                  "Step norm", "Optimality"))
+    print(
+        "{:^15}{:^15}{:^15}{:^15}{:^15}{:^15}".format(
+            "Iteration",
+            "Total nfev",
+            "Cost",
+            "Cost reduction",
+            "Step norm",
+            "Optimality",
+        )
+    )
 
 
-def print_iteration_nonlinear(iteration, nfev, cost, cost_reduction,
-                              step_norm, optimality):
+def print_iteration_nonlinear(
+    iteration, nfev, cost, cost_reduction, step_norm, optimality
+):
     if cost_reduction is None:
         cost_reduction = " " * 15
     else:
@@ -348,10 +355,13 @@ def print_iteration_nonlinear(iteration, nfev, cost, cost_reduction,
     else:
         step_norm = f"{step_norm:^15.2e}"
 
-    print(f"{iteration:^15}{nfev:^15}{cost:^15.4e}{cost_reduction}{step_norm}{optimality:^15.2e}")
+    print(
+        f"{iteration:^15}{nfev:^15}{cost:^15.4e}{cost_reduction}{step_norm}{optimality:^15.2e}"
+    )
 
 
 def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
+    """This is the main optimization algorithm."""
     x = x0.copy()
 
     f0 = fun(x0)
@@ -368,7 +378,8 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
 
     cost = 0.5 * np.dot(f, f)
 
-    g = compute_grad(J, f)
+    # Compute gradient of the least-squares cost function:
+    g = J.T.dot(f)
 
     jac_scale = isinstance(x_scale, str) and x_scale == "jac"
     if jac_scale:
@@ -465,7 +476,8 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
             J = jac(x)
             njev += 1
 
-            g = compute_grad(J, f)
+            # Compute gradient of the least-squares cost function:
+            g = J.T.dot(f)
 
             if jac_scale:
                 scale, scale_inv = compute_jac_scale(J, scale_inv)
@@ -474,6 +486,9 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
             actual_reduction = 0
 
         iteration += 1
+
+    # Done with the main iteration. The rest of this function is just tidying up
+    # the results.
 
     if termination_status is None:
         termination_status = 0
