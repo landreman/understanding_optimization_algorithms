@@ -1,4 +1,12 @@
 """
+This file contains the dogbox algorithm from scipy.optimize,
+but with some of the bells and whistles removed to make it easier to understand:
+* No sparse linear algebra.
+* No loss functions.
+* No callback functions.
+"""
+
+"""
 Dogleg algorithm with rectangular trust regions for least-squares minimization.
 
 The description of the algorithm can be found in [Voglis]_. The algorithm does
@@ -43,49 +51,127 @@ References
 import numpy as np
 from numpy.linalg import lstsq, norm
 
-from scipy.sparse.linalg import LinearOperator, aslinearoperator, lsmr
 from scipy.optimize import OptimizeResult
-from scipy._lib._util import _call_callback_maybe_halt
 
 
-from scipy.optimize._lsq.common import (
-    step_size_to_bound,
-    in_bounds,
-    update_tr_radius,
-    evaluate_quadratic,
-    build_quadratic_1d,
-    minimize_quadratic_1d,
-    compute_grad,
-    compute_jac_scale,
-    check_termination,
-    scale_for_robust_loss_function,
+from .common import (
+    TERMINATION_MESSAGES,
     print_header_nonlinear,
     print_iteration_nonlinear,
+    check_termination,
+    compute_jac_scale,
+    update_tr_radius,
+    evaluate_quadratic,
 )
 
 
-from .common import TERMINATION_MESSAGES
+def step_size_to_bound(x, s, lb, ub):
+    """Compute a min_step size required to reach a bound.
 
+    The function computes a positive scalar t, such that x + s * t is on
+    the bound.
 
-def lsmr_operator(Jop, d, active_set):
-    """Compute LinearOperator to use in LSMR by dogbox algorithm.
+    Returns
+    -------
+    step : float
+        Computed step. Non-negative value.
+    hits : ndarray of int with shape of x
+        Each element indicates whether a corresponding variable reaches the
+        bound:
 
-    `active_set` mask is used to excluded active variables from computations
-    of matrix-vector products.
+             *  0 - the bound was not hit.
+             * -1 - the lower bound was hit.
+             *  1 - the upper bound was hit.
     """
-    m, n = Jop.shape
+    non_zero = np.nonzero(s)
+    s_non_zero = s[non_zero]
+    steps = np.empty_like(x)
+    steps.fill(np.inf)
+    with np.errstate(over="ignore"):
+        steps[non_zero] = np.maximum(
+            (lb - x)[non_zero] / s_non_zero, (ub - x)[non_zero] / s_non_zero
+        )
+    min_step = np.min(steps)
+    return min_step, np.equal(steps, min_step) * np.sign(s).astype(int)
 
-    def matvec(x):
-        x_free = x.ravel().copy()
-        x_free[active_set] = 0
-        return Jop.matvec(x * d)
 
-    def rmatvec(x):
-        r = d * Jop.rmatvec(x)
-        r[active_set] = 0
-        return r
+def in_bounds(x, lb, ub):
+    """Check if a point lies within bounds."""
+    return np.all((x >= lb) & (x <= ub))
 
-    return LinearOperator((m, n), matvec=matvec, rmatvec=rmatvec, dtype=float)
+
+def build_quadratic_1d(J, g, s, diag=None, s0=None):
+    """Parameterize a multivariate quadratic function along a line.
+
+    The resulting univariate quadratic function is given as follows::
+
+        f(t) = 0.5 * (s0 + s*t).T * (J.T*J + diag) * (s0 + s*t) +
+               g.T * (s0 + s*t)
+
+    Parameters
+    ----------
+    J : ndarray, sparse array or LinearOperator shape (m, n)
+        Jacobian matrix, affects the quadratic term.
+    g : ndarray, shape (n,)
+        Gradient, defines the linear term.
+    s : ndarray, shape (n,)
+        Direction vector of a line.
+    diag : None or ndarray with shape (n,), optional
+        Addition diagonal part, affects the quadratic term.
+        If None, assumed to be 0.
+    s0 : None or ndarray with shape (n,), optional
+        Initial point. If None, assumed to be 0.
+
+    Returns
+    -------
+    a : float
+        Coefficient for t**2.
+    b : float
+        Coefficient for t.
+    c : float
+        Free term. Returned only if `s0` is provided.
+    """
+    v = J.dot(s)
+    a = np.dot(v, v)
+    if diag is not None:
+        a += np.dot(s * diag, s)
+    a *= 0.5
+
+    b = np.dot(g, s)
+
+    if s0 is not None:
+        u = J.dot(s0)
+        b += np.dot(u, v)
+        c = 0.5 * np.dot(u, u) + np.dot(g, s0)
+        if diag is not None:
+            b += np.dot(s0 * diag, s)
+            c += 0.5 * np.dot(s0 * diag, s0)
+        return a, b, c
+    else:
+        return a, b
+
+
+def minimize_quadratic_1d(a, b, lb, ub, c=0):
+    """Minimize a 1-D quadratic function subject to bounds.
+
+    The free term `c` is 0 by default. Bounds must be finite.
+
+    Returns
+    -------
+    t : float
+        Minimum point.
+    y : float
+        Minimum value.
+    """
+    t = [lb, ub]
+    if a != 0:
+        extremum = -0.5 * b / a
+        if lb < extremum < ub:
+            t.append(extremum)
+    t = np.asarray(t)
+    y = t * (a * t + b) + c
+    min_index = np.argmin(y)
+    return t[min_index], y[min_index]
 
 
 def find_intersection(x, tr_bounds, lb, ub):
@@ -165,10 +251,6 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
     initial_cost = 0.5 * np.dot(f0, f0)
     lb = np.full_like(x0, -np.inf)
     ub = np.full_like(x0, np.inf)
-    loss_function = None
-    tr_solver = "exact"
-    tr_options = None
-    callback = None
     if isinstance(x_scale, float):
         x_scale = np.full_like(x0, x_scale)
 
@@ -179,14 +261,10 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
     J = J0
     njev = 1
 
-    if loss_function is not None:
-        rho = loss_function(f)
-        cost = 0.5 * np.sum(rho[0])
-        J, f = scale_for_robust_loss_function(J, f, rho)
-    else:
-        cost = 0.5 * np.dot(f, f)
+    cost = 0.5 * np.dot(f, f)
 
-    g = compute_grad(J, f)
+    # Compute gradient of the least-squares cost function:
+    g = J.T.dot(f)
 
     jac_scale = isinstance(x_scale, str) and x_scale == "jac"
     if jac_scale:
@@ -242,32 +320,11 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
         scale_free = scale[free_set]
 
         # Compute (Gauss-)Newton and build quadratic model for Cauchy step.
-        if tr_solver == "exact":
-            J_free = J[:, free_set]
-            newton_step = lstsq(J_free, -f, rcond=-1)[0]
+        J_free = J[:, free_set]
+        newton_step = lstsq(J_free, -f, rcond=-1)[0]
 
-            # Coefficients for the quadratic model along the anti-gradient.
-            a, b = build_quadratic_1d(J_free, g_free, -g_free)
-        elif tr_solver == "lsmr":
-            Jop = aslinearoperator(J)
-
-            # We compute lsmr step in scaled variables and then
-            # transform back to normal variables, if lsmr would give exact lsq
-            # solution, this would be equivalent to not doing any
-            # transformations, but from experience it's better this way.
-
-            # We pass active_set to make computations as if we selected
-            # the free subset of J columns, but without actually doing any
-            # slicing, which is expensive for sparse matrices and impossible
-            # for LinearOperator.
-
-            lsmr_op = lsmr_operator(Jop, scale, active_set)
-            newton_step = -lsmr(lsmr_op, f, **tr_options)[0][free_set]
-            newton_step *= scale_free
-
-            # Components of g for active variables were zeroed, so this call
-            # is correct and equivalent to using J_free and g_free.
-            a, b = build_quadratic_1d(Jop, g, -g)
+        # Coefficients for the quadratic model along the anti-gradient.
+        a, b = build_quadratic_1d(J_free, g_free, -g_free)
 
         actual_reduction = -1.0
         while actual_reduction <= 0 and nfev < max_nfev:
@@ -280,10 +337,7 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
             step.fill(0.0)
             step[free_set] = step_free
 
-            if tr_solver == "exact":
-                predicted_reduction = -evaluate_quadratic(J_free, g_free, step_free)
-            elif tr_solver == "lsmr":
-                predicted_reduction = -evaluate_quadratic(Jop, g, step)
+            predicted_reduction = -evaluate_quadratic(J_free, g_free, step_free)
 
             # gh11403 ensure that solution is fully within bounds.
             x_new = np.clip(x + step, lb, ub)
@@ -298,10 +352,7 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
                 continue
 
             # Usual trust-region step quality estimation.
-            if loss_function is not None:
-                cost_new = loss_function(f_new, cost_only=True)
-            else:
-                cost_new = 0.5 * np.dot(f_new, f_new)
+            cost_new = 0.5 * np.dot(f_new, f_new)
             actual_reduction = cost - cost_new
 
             Delta, ratio = update_tr_radius(
@@ -334,11 +385,8 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
             J = jac(x)
             njev += 1
 
-            if loss_function is not None:
-                rho = loss_function(f)
-                J, f = scale_for_robust_loss_function(J, f, rho)
-
-            g = compute_grad(J, f)
+            # Compute gradient of the least-squares cost function:
+            g = J.T.dot(f)
 
             if jac_scale:
                 scale, scale_inv = compute_jac_scale(J, scale_inv)
@@ -347,15 +395,6 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
             actual_reduction = 0
 
         iteration += 1
-
-        # Call callback function and possibly stop optimization
-        if callback is not None:
-            intermediate_result = OptimizeResult(x=x, fun=f, nit=iteration, nfev=nfev)
-            intermediate_result["cost"] = cost_new
-
-            if _call_callback_maybe_halt(callback, intermediate_result):
-                termination_status = -2
-                break
 
     if termination_status is None:
         termination_status = 0
