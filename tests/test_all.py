@@ -62,73 +62,75 @@ def test_scipy():
 
 
 def test_trf():
-    x0 = np.array([0, 0])
-    # Order of arguments:
-    # fun, jac, x0, ftol, xtol, gtol, max_nfev,
-    # x_scale, loss_function, tr_solver, tr_options, verbose,
-    res = trf_no_bounds(
-        rosenbrock_residuals,
-        rosenbrock_jacobian,
-        x0,
-        ftol=1e-8,
-        xtol=1e-8,
-        gtol=1e-8,
-        max_nfev=100,
-        x_scale=1.0,
-        verbose=2,
-    )
-    np.testing.assert_allclose(res.x, [1, 1], rtol=1e-14)
-    assert res.success
+    for x_scale in [1.0, "jac"]:
+        x0 = np.array([0, 0])
+        # Order of arguments:
+        # fun, jac, x0, ftol, xtol, gtol, max_nfev,
+        # x_scale, loss_function, tr_solver, tr_options, verbose,
+        res = trf_no_bounds(
+            rosenbrock_residuals,
+            rosenbrock_jacobian,
+            x0,
+            ftol=1e-8,
+            xtol=1e-8,
+            gtol=1e-8,
+            max_nfev=100,
+            x_scale=x_scale,
+            verbose=2,
+        )
+        np.testing.assert_allclose(res.x, [1, 1], rtol=1e-14)
+        assert res.success
 
-    prob = ExponentialFittingProblem(a=3, b=2, noise=0.0)
-    x0 = np.zeros(2)
-    res = trf_no_bounds(
-        prob.fun,
-        prob.jac,
-        x0,
-        ftol=1e-8,
-        xtol=1e-8,
-        gtol=1e-8,
-        max_nfev=100,
-        x_scale=1.0,
-        verbose=2,
-    )
-    print(res)
-    np.testing.assert_allclose(res.x, [3, 2], rtol=1e-14)
-    assert res.success
+        prob = ExponentialFittingProblem(a=3, b=2, noise=0.0)
+        x0 = np.zeros(2)
+        res = trf_no_bounds(
+            prob.fun,
+            prob.jac,
+            x0,
+            ftol=1e-8,
+            xtol=1e-8,
+            gtol=1e-8,
+            max_nfev=100,
+            x_scale=x_scale,
+            verbose=2,
+        )
+        print(res)
+        np.testing.assert_allclose(res.x, [3, 2], rtol=1e-11)
+        assert res.success
 
 def test_dogbox():
-    x0 = np.array([0., 0.])
-    # Order of arguments:
-    # fun, jac, x0, ftol, xtol, gtol, max_nfev,
-    # x_scale, loss_function, tr_solver, tr_options, verbose,
-    res = dogbox(
-        rosenbrock_residuals,
-        rosenbrock_jacobian,
-        x0,
-        ftol=1e-8,
-        xtol=1e-8,
-        gtol=1e-8,
-        max_nfev=100,
-        x_scale=1.0,
-        verbose=2,
-    )
-    np.testing.assert_allclose(res.x, [1, 1], rtol=1e-14)
-    assert res.success
+    for x_scale in [1.0, "jac"]:
+        x0 = np.array([0., 0.])
+        # Order of arguments:
+        # fun, jac, x0, ftol, xtol, gtol, max_nfev,
+        # x_scale, loss_function, tr_solver, tr_options, verbose,
+        res = dogbox(
+            rosenbrock_residuals,
+            rosenbrock_jacobian,
+            x0,
+            ftol=1e-8,
+            xtol=1e-8,
+            gtol=1e-8,
+            max_nfev=100,
+            x_scale=x_scale,
+            verbose=2,
+        )
+        np.testing.assert_allclose(res.x, [1, 1], rtol=1e-14)
+        assert res.success
 
-    prob = ExponentialFittingProblem(a=3, b=2, noise=0.0)
-    x0 = np.zeros(2)
-    res = dogbox(
-        prob.fun,
-        prob.jac,
-        x0,
-        ftol=1e-8,
-        xtol=1e-8,
-        gtol=1e-8,
-        max_nfev=100,
-        x_scale=1.0,
-        verbose=2,
-    )
-    print(res)
-    np.testing.assert_allclose(res.x, [3, 2], rtol=1e-14)
-    assert res.success
+        prob = ExponentialFittingProblem(a=3, b=2, noise=0.0)
+        x0 = np.zeros(2)
+        res = dogbox(
+            prob.fun,
+            prob.jac,
+            x0,
+            ftol=1e-8,
+            xtol=1e-8,
+            gtol=1e-8,
+            max_nfev=100,
+            x_scale=x_scale,
+            verbose=2,
+        )
+        print(res)
+        np.testing.assert_allclose(res.x, [3, 2], rtol=1e-14)
+        assert res.success
