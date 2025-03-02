@@ -115,6 +115,7 @@ from .common import (
     compute_jac_scale,
     update_tr_radius,
     evaluate_quadratic,
+    finish_up,
 )
 
 EPS = np.finfo(float).eps
@@ -240,19 +241,14 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
     """This is the main optimization algorithm."""
     x = x0.copy()
 
-    f0 = fun(x0)
-    J0 = jac(x0)
-    initial_cost = 0.5 * np.dot(f0, f0)
-
-    f = f0
-    f_true = f.copy()
+    f = fun(x0)
+    J = jac(x0)
     nfev = 1
-
-    J = J0
     njev = 1
-    m, n = J.shape
+    initial_cost = 0.5 * np.dot(f, f)
+    cost = initial_cost.copy()
 
-    cost = 0.5 * np.dot(f, f)
+    m, n = J.shape
 
     # Compute gradient of the least-squares cost function:
     g = J.T.dot(f)
@@ -349,9 +345,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
 
         if actual_reduction > 0:
             x = x_new
-
             f = f_new
-            f_true = f.copy()
 
             cost = cost_new
 
@@ -379,7 +373,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
     result = OptimizeResult(
         x=x,
         cost=cost,
-        fun=f_true,
+        fun=f,
         jac=J,
         grad=g,
         optimality=g_norm,
@@ -389,15 +383,4 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
         status=termination_status,
     )
 
-    result.message = TERMINATION_MESSAGES[result.status]
-    result.success = result.status > 0
-
-    if verbose >= 1:
-        print(result.message)
-        print(
-            f"Function evaluations {result.nfev}, initial cost {initial_cost:.4e}, "
-            f"final cost {result.cost:.4e}, "
-            f"first-order optimality {result.optimality:.2e}."
-        )
-
-    return result
+    return finish_up(result, initial_cost, verbose)

@@ -133,3 +133,18 @@ def evaluate_quadratic(J, g, s, diag=None):
     l = np.dot(s, g)
 
     return 0.5 * q + l
+
+
+def finish_up(result, initial_cost, verbose):
+    result.message = TERMINATION_MESSAGES[result.status]
+    result.success = result.status > 0
+
+    if verbose >= 1:
+        print(result.message)
+        print(
+            f"Function evaluations {result.nfev}, initial cost {initial_cost:.4e}, "
+            f"final cost {result.cost:.4e}, "
+            f"first-order optimality {result.optimality:.2e}."
+        )
+
+    return result
