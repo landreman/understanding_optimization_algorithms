@@ -1,0 +1,11 @@
+[project]
+name = "understanding_optimization_algorithms"
+version = "v0.1.0"
+dynamic = ["dependencies"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
