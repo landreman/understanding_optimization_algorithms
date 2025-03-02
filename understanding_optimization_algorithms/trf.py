@@ -101,10 +101,13 @@ from scipy.optimize import OptimizeResult
 from scipy.optimize._lsq.common import (
     solve_lsq_trust_region,
     evaluate_quadratic,
-    compute_grad, compute_jac_scale, check_termination,
-    update_tr_radius, print_header_nonlinear,
-    print_iteration_nonlinear)
-from scipy._lib._util import _call_callback_maybe_halt
+    compute_grad,
+    compute_jac_scale,
+    check_termination,
+    update_tr_radius,
+    print_header_nonlinear,
+    print_iteration_nonlinear,
+)
 
 TERMINATION_MESSAGES = {
     -2: "Stopped because `callback` function raised `StopIteration` or returned `True`",
@@ -113,12 +116,11 @@ TERMINATION_MESSAGES = {
     1: "`gtol` termination condition is satisfied.",
     2: "`ftol` termination condition is satisfied.",
     3: "`xtol` termination condition is satisfied.",
-    4: "Both `ftol` and `xtol` termination conditions are satisfied."
+    4: "Both `ftol` and `xtol` termination conditions are satisfied.",
 }
 
-def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
-                  x_scale, verbose, 
-                  callback=None):
+
+def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
     x = x0.copy()
 
     f0 = fun(x0)
@@ -137,7 +139,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
 
     g = compute_grad(J, f)
 
-    jac_scale = isinstance(x_scale, str) and x_scale == 'jac'
+    jac_scale = isinstance(x_scale, str) and x_scale == "jac"
     if jac_scale:
         scale, scale_inv = compute_jac_scale(J)
     else:
@@ -166,8 +168,9 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
             termination_status = 1
 
         if verbose == 2:
-            print_iteration_nonlinear(iteration, nfev, cost, actual_reduction,
-                                      step_norm, g_norm)
+            print_iteration_nonlinear(
+                iteration, nfev, cost, actual_reduction, step_norm, g_norm
+            )
 
         if termination_status is not None or nfev == max_nfev:
             break
@@ -183,7 +186,8 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
         actual_reduction = -1
         while actual_reduction <= 0 and nfev < max_nfev:
             step_h, alpha, n_iter = solve_lsq_trust_region(
-                n, m, uf, s, V, Delta, initial_alpha=alpha)
+                n, m, uf, s, V, Delta, initial_alpha=alpha
+            )
 
             predicted_reduction = -evaluate_quadratic(J_h, g_h, step_h)
             step = d * step_h
@@ -202,12 +206,17 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
             actual_reduction = cost - cost_new
 
             Delta_new, ratio = update_tr_radius(
-                Delta, actual_reduction, predicted_reduction,
-                step_h_norm, step_h_norm > 0.95 * Delta)
+                Delta,
+                actual_reduction,
+                predicted_reduction,
+                step_h_norm,
+                step_h_norm > 0.95 * Delta,
+            )
 
             step_norm = norm(step)
             termination_status = check_termination(
-                actual_reduction, cost, step_norm, norm(x), ratio, ftol, xtol)
+                actual_reduction, cost, step_norm, norm(x), ratio, ftol, xtol
+            )
             if termination_status is not None:
                 break
 
@@ -222,7 +231,6 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
 
             cost = cost_new
 
-            # J = jac(x, f)
             J = jac(x)
             njev += 1
 
@@ -235,35 +243,33 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
             actual_reduction = 0
 
         iteration += 1
-        
-        # Call callback function and possibly stop optimization
-        if callback is not None:
-            intermediate_result = OptimizeResult(
-                x=x, fun=f_true, nit=iteration, nfev=nfev)
-            intermediate_result["cost"] = cost
-
-            if _call_callback_maybe_halt(
-                callback, intermediate_result
-            ):
-                termination_status = -2
-                break
 
     if termination_status is None:
         termination_status = 0
 
     active_mask = np.zeros_like(x)
     result = OptimizeResult(
-        x=x, cost=cost, fun=f_true, jac=J, grad=g, optimality=g_norm,
-        active_mask=active_mask, nfev=nfev, njev=njev,
-        status=termination_status)
+        x=x,
+        cost=cost,
+        fun=f_true,
+        jac=J,
+        grad=g,
+        optimality=g_norm,
+        active_mask=active_mask,
+        nfev=nfev,
+        njev=njev,
+        status=termination_status,
+    )
 
     result.message = TERMINATION_MESSAGES[result.status]
     result.success = result.status > 0
 
     if verbose >= 1:
         print(result.message)
-        print(f"Function evaluations {result.nfev}, initial cost {initial_cost:.4e}, "
+        print(
+            f"Function evaluations {result.nfev}, initial cost {initial_cost:.4e}, "
             f"final cost {result.cost:.4e}, "
-            f"first-order optimality {result.optimality:.2e}.")
+            f"first-order optimality {result.optimality:.2e}."
+        )
 
     return result
