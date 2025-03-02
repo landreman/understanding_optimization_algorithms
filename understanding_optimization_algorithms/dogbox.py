@@ -95,11 +95,6 @@ def step_size_to_bound(x, s, lb, ub):
     return min_step, np.equal(steps, min_step) * np.sign(s).astype(int)
 
 
-def in_bounds(x, lb, ub):
-    """Check if a point lies within bounds."""
-    return np.all((x >= lb) & (x <= ub))
-
-
 def build_quadratic_1d(J, g, s, diag=None, s0=None):
     """Parameterize a multivariate quadratic function along a line.
 
@@ -224,7 +219,7 @@ def dogleg_step(x, newton_step, g, a, b, tr_bounds, lb, ub):
     )
     bound_hits = np.zeros_like(x, dtype=int)
 
-    if in_bounds(newton_step, lb_total, ub_total):
+    if np.all((newton_step >= lb_total) & (newton_step <= ub_total)):
         return newton_step, bound_hits, False
 
     to_bounds, _ = step_size_to_bound(np.zeros_like(x), -g, lb_total, ub_total)
@@ -276,10 +271,6 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
     if Delta == 0:
         Delta = 1.0
 
-    on_bound = np.zeros_like(x0, dtype=int)
-    on_bound[np.equal(x0, lb)] = -1
-    on_bound[np.equal(x0, ub)] = 1
-
     x = x0
     step = np.empty_like(x0)
 
@@ -295,13 +286,6 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
         print_header_nonlinear()
 
     while True:
-        active_set = on_bound * g < 0
-        free_set = ~active_set
-
-        g_free = g[free_set]
-        g_full = g.copy()
-        g[active_set] = 0
-
         g_norm = norm(g, ord=np.inf)
         if g_norm < gtol:
             termination_status = 1
@@ -314,33 +298,23 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
         if termination_status is not None or nfev == max_nfev:
             break
 
-        x_free = x[free_set]
-        lb_free = lb[free_set]
-        ub_free = ub[free_set]
-        scale_free = scale[free_set]
-
         # Compute (Gauss-)Newton and build quadratic model for Cauchy step.
-        J_free = J[:, free_set]
-        newton_step = lstsq(J_free, -f, rcond=-1)[0]
+        newton_step = lstsq(J, -f, rcond=-1)[0]
 
         # Coefficients for the quadratic model along the anti-gradient.
-        a, b = build_quadratic_1d(J_free, g_free, -g_free)
+        a, b = build_quadratic_1d(J, g, -g)
 
         actual_reduction = -1.0
         while actual_reduction <= 0 and nfev < max_nfev:
-            tr_bounds = Delta * scale_free
+            tr_bounds = Delta * scale
 
-            step_free, on_bound_free, tr_hit = dogleg_step(
-                x_free, newton_step, g_free, a, b, tr_bounds, lb_free, ub_free
+            step, on_bound_free, tr_hit = dogleg_step(
+                x, newton_step, g, a, b, tr_bounds, lb, ub
             )
 
-            step.fill(0.0)
-            step[free_set] = step_free
+            predicted_reduction = -evaluate_quadratic(J, g, step)
 
-            predicted_reduction = -evaluate_quadratic(J_free, g_free, step_free)
-
-            # gh11403 ensure that solution is fully within bounds.
-            x_new = np.clip(x + step, lb, ub)
+            x_new = x + step
 
             f_new = fun(x_new)
             nfev += 1
@@ -368,15 +342,8 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
                 break
 
         if actual_reduction > 0:
-            on_bound[free_set] = on_bound_free
 
             x = x_new
-            # Set variables exactly at the boundary.
-            mask = on_bound == -1
-            x[mask] = lb[mask]
-            mask = on_bound == 1
-            x[mask] = ub[mask]
-
             f = f_new
             f_true = f.copy()
 
@@ -404,9 +371,8 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
         cost=cost,
         fun=f_true,
         jac=J,
-        grad=g_full,
+        grad=g,
         optimality=g_norm,
-        active_mask=on_bound,
         nfev=nfev,
         njev=njev,
         status=termination_status,
