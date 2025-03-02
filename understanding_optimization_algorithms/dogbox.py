@@ -1,6 +1,7 @@
 """
 This file contains the dogbox algorithm from scipy.optimize,
 but with some of the bells and whistles removed to make it easier to understand:
+* No box constraints.
 * No sparse linear algebra.
 * No loss functions.
 * No callback functions.
@@ -319,7 +320,7 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
 
     # Done with the main iteration. The rest of this function is just tidying up
     # the results.
-    
+
     if termination_status is None:
         termination_status = 0
 
