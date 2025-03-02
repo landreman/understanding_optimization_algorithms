@@ -95,17 +95,14 @@ References
 """
 import numpy as np
 from numpy.linalg import norm
-from scipy.linalg import svd, qr
-from scipy.sparse.linalg import lsmr
+from scipy.linalg import svd
 from scipy.optimize import OptimizeResult
 
 from scipy.optimize._lsq.common import (
-    step_size_to_bound, find_active_constraints, in_bounds,
-    make_strictly_feasible, intersect_trust_region, solve_lsq_trust_region,
-    solve_trust_region_2d, minimize_quadratic_1d, build_quadratic_1d,
-    evaluate_quadratic, right_multiplied_operator, regularized_lsq_operator,
-    CL_scaling_vector, compute_grad, compute_jac_scale, check_termination,
-    update_tr_radius, scale_for_robust_loss_function, print_header_nonlinear,
+    solve_lsq_trust_region,
+    evaluate_quadratic,
+    compute_grad, compute_jac_scale, check_termination,
+    update_tr_radius, print_header_nonlinear,
     print_iteration_nonlinear)
 from scipy._lib._util import _call_callback_maybe_halt
 
@@ -119,96 +116,8 @@ TERMINATION_MESSAGES = {
     4: "Both `ftol` and `xtol` termination conditions are satisfied."
 }
 
-def trf(fun, jac, x0, f0, J0, lb, ub, ftol, xtol, gtol, max_nfev, x_scale,
-        loss_function, tr_solver, tr_options, verbose, callback=None):
-    # For efficiency, it makes sense to run the simplified version of the
-    # algorithm when no bounds are imposed. We decided to write the two
-    # separate functions. It violates the DRY principle, but the individual
-    # functions are kept the most readable.
-    return trf_no_bounds(
-        fun, jac, x0, f0, J0, ftol, xtol, gtol, max_nfev, x_scale,
-        loss_function, tr_solver, tr_options, verbose, callback=callback)
-
-
-def select_step(x, J_h, diag_h, g_h, p, p_h, d, Delta, lb, ub, theta):
-    """Select the best step according to Trust Region Reflective algorithm."""
-    if in_bounds(x + p, lb, ub):
-        p_value = evaluate_quadratic(J_h, g_h, p_h, diag=diag_h)
-        return p, p_h, -p_value
-
-    p_stride, hits = step_size_to_bound(x, p, lb, ub)
-
-    # Compute the reflected direction.
-    r_h = np.copy(p_h)
-    r_h[hits.astype(bool)] *= -1
-    r = d * r_h
-
-    # Restrict trust-region step, such that it hits the bound.
-    p *= p_stride
-    p_h *= p_stride
-    x_on_bound = x + p
-
-    # Reflected direction will cross first either feasible region or trust
-    # region boundary.
-    _, to_tr = intersect_trust_region(p_h, r_h, Delta)
-    to_bound, _ = step_size_to_bound(x_on_bound, r, lb, ub)
-
-    # Find lower and upper bounds on a step size along the reflected
-    # direction, considering the strict feasibility requirement. There is no
-    # single correct way to do that, the chosen approach seems to work best
-    # on test problems.
-    r_stride = min(to_bound, to_tr)
-    if r_stride > 0:
-        r_stride_l = (1 - theta) * p_stride / r_stride
-        if r_stride == to_bound:
-            r_stride_u = theta * to_bound
-        else:
-            r_stride_u = to_tr
-    else:
-        r_stride_l = 0
-        r_stride_u = -1
-
-    # Check if reflection step is available.
-    if r_stride_l <= r_stride_u:
-        a, b, c = build_quadratic_1d(J_h, g_h, r_h, s0=p_h, diag=diag_h)
-        r_stride, r_value = minimize_quadratic_1d(
-            a, b, r_stride_l, r_stride_u, c=c)
-        r_h *= r_stride
-        r_h += p_h
-        r = r_h * d
-    else:
-        r_value = np.inf
-
-    # Now correct p_h to make it strictly interior.
-    p *= theta
-    p_h *= theta
-    p_value = evaluate_quadratic(J_h, g_h, p_h, diag=diag_h)
-
-    ag_h = -g_h
-    ag = d * ag_h
-
-    to_tr = Delta / norm(ag_h)
-    to_bound, _ = step_size_to_bound(x, ag, lb, ub)
-    if to_bound < to_tr:
-        ag_stride = theta * to_bound
-    else:
-        ag_stride = to_tr
-
-    a, b = build_quadratic_1d(J_h, g_h, ag_h, diag=diag_h)
-    ag_stride, ag_value = minimize_quadratic_1d(a, b, 0, ag_stride)
-    ag_h *= ag_stride
-    ag *= ag_stride
-
-    if p_value < r_value and p_value < ag_value:
-        return p, p_h, -p_value
-    elif r_value < p_value and r_value < ag_value:
-        return r, r_h, -r_value
-    else:
-        return ag, ag_h, -ag_value
-
-
 def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
-                  x_scale, loss_function, tr_solver, tr_options, verbose, 
+                  x_scale, verbose, 
                   callback=None):
     x = x0.copy()
 
@@ -224,12 +133,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
     njev = 1
     m, n = J.shape
 
-    if loss_function is not None:
-        rho = loss_function(f)
-        cost = 0.5 * np.sum(rho[0])
-        J, f = scale_for_robust_loss_function(J, f, rho)
-    else:
-        cost = 0.5 * np.dot(f, f)
+    cost = 0.5 * np.dot(f, f)
 
     g = compute_grad(J, f)
 
@@ -242,11 +146,6 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
     Delta = norm(x0 * scale_inv)
     if Delta == 0:
         Delta = 1.0
-
-    if tr_solver == 'lsmr':
-        reg_term = 0
-        damp = tr_options.pop('damp', 0.0)
-        regularize = tr_options.pop('regularize', True)
 
     if max_nfev is None:
         max_nfev = x0.size * 100
@@ -276,36 +175,15 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
         d = scale
         g_h = d * g
 
-        if tr_solver == 'exact':
-            J_h = J * d
-            U, s, V = svd(J_h, full_matrices=False)
-            V = V.T
-            uf = U.T.dot(f)
-        elif tr_solver == 'lsmr':
-            J_h = right_multiplied_operator(J, d)
-
-            if regularize:
-                a, b = build_quadratic_1d(J_h, g_h, -g_h)
-                to_tr = Delta / norm(g_h)
-                ag_value = minimize_quadratic_1d(a, b, 0, to_tr)[1]
-                reg_term = -ag_value / Delta**2
-
-            damp_full = (damp**2 + reg_term)**0.5
-            gn_h = lsmr(J_h, f, damp=damp_full, **tr_options)[0]
-            S = np.vstack((g_h, gn_h)).T
-            S, _ = qr(S, mode='economic')
-            JS = J_h.dot(S)
-            B_S = np.dot(JS.T, JS)
-            g_S = S.T.dot(g_h)
+        J_h = J * d
+        U, s, V = svd(J_h, full_matrices=False)
+        V = V.T
+        uf = U.T.dot(f)
 
         actual_reduction = -1
         while actual_reduction <= 0 and nfev < max_nfev:
-            if tr_solver == 'exact':
-                step_h, alpha, n_iter = solve_lsq_trust_region(
-                    n, m, uf, s, V, Delta, initial_alpha=alpha)
-            elif tr_solver == 'lsmr':
-                p_S, _ = solve_trust_region_2d(B_S, g_S, Delta)
-                step_h = S.dot(p_S)
+            step_h, alpha, n_iter = solve_lsq_trust_region(
+                n, m, uf, s, V, Delta, initial_alpha=alpha)
 
             predicted_reduction = -evaluate_quadratic(J_h, g_h, step_h)
             step = d * step_h
@@ -320,10 +198,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
                 continue
 
             # Usual trust-region step quality estimation.
-            if loss_function is not None:
-                cost_new = loss_function(f_new, cost_only=True)
-            else:
-                cost_new = 0.5 * np.dot(f_new, f_new)
+            cost_new = 0.5 * np.dot(f_new, f_new)
             actual_reduction = cost - cost_new
 
             Delta_new, ratio = update_tr_radius(
@@ -350,10 +225,6 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev,
             # J = jac(x, f)
             J = jac(x)
             njev += 1
-
-            if loss_function is not None:
-                rho = loss_function(f)
-                J, f = scale_for_robust_loss_function(J, f, rho)
 
             g = compute_grad(J, f)
 

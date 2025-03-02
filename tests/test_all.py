@@ -30,9 +30,6 @@ def test_trf():
         gtol=1e-8,
         max_nfev=100,
         x_scale=1.0,
-        loss_function=None,
-        tr_solver="exact",
-        tr_options=None,
         verbose=2,
     )
     np.testing.assert_allclose(res.x, [1, 1], rtol=1e-14)
