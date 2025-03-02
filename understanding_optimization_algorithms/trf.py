@@ -106,18 +106,9 @@ from numpy.linalg import norm
 from scipy.linalg import svd
 from scipy.optimize import OptimizeResult
 
+from .common import TERMINATION_MESSAGES
 
 EPS = np.finfo(float).eps
-
-TERMINATION_MESSAGES = {
-    -2: "Stopped because `callback` function raised `StopIteration` or returned `True`",
-    -1: "Improper input parameters status returned from `leastsq`",
-    0: "The maximum number of function evaluations is exceeded.",
-    1: "`gtol` termination condition is satisfied.",
-    2: "`ftol` termination condition is satisfied.",
-    3: "`xtol` termination condition is satisfied.",
-    4: "Both `ftol` and `xtol` termination conditions are satisfied.",
-}
 
 
 def solve_lsq_trust_region(
@@ -429,7 +420,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
 
         actual_reduction = -1
         while actual_reduction <= 0 and nfev < max_nfev:
-            # Inner iteration: Without additional evaluations of the Jacobian, 
+            # Inner iteration: Without additional evaluations of the Jacobian,
             # try different trust region radii until the cost function
             # decreases by any positive amount.
 
