@@ -44,20 +44,21 @@ class ExponentialFittingProblem:
         return J
 
 
-def test_scipy_trf():
-    x0 = np.array([0, 0])
-    res = least_squares(
-        rosenbrock_residuals, x0, jac=rosenbrock_jacobian, method="trf", verbose=2
-    )
-    np.testing.assert_allclose(res.x, [1, 1], rtol=1e-14)
-    assert res.success
+def test_scipy():
+    for method in ["trf", "lm", "dogbox"]:
+        x0 = np.array([0, 0])
+        res = least_squares(
+            rosenbrock_residuals, x0, jac=rosenbrock_jacobian, method=method, verbose=2
+        )
+        np.testing.assert_allclose(res.x, [1, 1], rtol=1e-14)
+        assert res.success
 
-    prob = ExponentialFittingProblem(a=3, b=2, noise=0.0)
-    x0 = np.zeros(2)
-    res = least_squares(prob.fun, x0=x0, jac=prob.jac, method="trf", verbose=2)
-    print(res)
-    np.testing.assert_allclose(res.x, [3, 2], rtol=1e-14)
-    assert res.success
+        prob = ExponentialFittingProblem(a=3, b=2, noise=0.0)
+        x0 = np.zeros(2)
+        res = least_squares(prob.fun, x0=x0, jac=prob.jac, method=method, verbose=2)
+        print(res)
+        np.testing.assert_allclose(res.x, [3, 2], rtol=1e-14)
+        assert res.success
 
 
 def test_trf():

@@ -405,6 +405,8 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
         print_header_nonlinear()
 
     while True:
+        # Major iterations of the algorithm.
+
         g_norm = norm(g, ord=np.inf)
         if g_norm < gtol:
             termination_status = 1
@@ -427,6 +429,10 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
 
         actual_reduction = -1
         while actual_reduction <= 0 and nfev < max_nfev:
+            # Inner iteration: Without additional evaluations of the Jacobian, 
+            # try different trust region radii until the cost function
+            # decreases by any positive amount.
+
             step_h, alpha, n_iter = solve_lsq_trust_region(
                 n, m, uf, s, V, Delta, initial_alpha=alpha
             )
@@ -434,7 +440,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
             predicted_reduction = -evaluate_quadratic(J_h, g_h, step_h)
             step = d * step_h
             x_new = x + step
-            f_new = fun(x_new)
+            f_new = fun(x_new)  # <<<<<< Function evaluation here!
             nfev += 1
 
             step_h_norm = norm(step_h)
@@ -473,7 +479,7 @@ def trf_no_bounds(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
 
             cost = cost_new
 
-            J = jac(x)
+            J = jac(x)  # <<<<<< Jacobian evaluation here!
             njev += 1
 
             # Compute gradient of the least-squares cost function:
