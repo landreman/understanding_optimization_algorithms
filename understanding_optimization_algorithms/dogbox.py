@@ -97,13 +97,12 @@ def step_size_to_bound(x, s, lb, ub):
     return min_step, np.equal(steps, min_step) * np.sign(s).astype(int)
 
 
-def build_quadratic_1d(J, g, s, diag=None, s0=None):
+def build_quadratic_1d(J, g, s):
     """Parameterize a multivariate quadratic function along a line.
 
     The resulting univariate quadratic function is given as follows::
 
-        f(t) = 0.5 * (s0 + s*t).T * (J.T*J + diag) * (s0 + s*t) +
-               g.T * (s0 + s*t)
+        f(t) = 0.5 * (s*t).T * (J.T*J) * (s*t) + g.T * (s*t)
 
     Parameters
     ----------
@@ -113,11 +112,6 @@ def build_quadratic_1d(J, g, s, diag=None, s0=None):
         Gradient, defines the linear term.
     s : ndarray, shape (n,)
         Direction vector of a line.
-    diag : None or ndarray with shape (n,), optional
-        Addition diagonal part, affects the quadratic term.
-        If None, assumed to be 0.
-    s0 : None or ndarray with shape (n,), optional
-        Initial point. If None, assumed to be 0.
 
     Returns
     -------
@@ -125,33 +119,18 @@ def build_quadratic_1d(J, g, s, diag=None, s0=None):
         Coefficient for t**2.
     b : float
         Coefficient for t.
-    c : float
-        Free term. Returned only if `s0` is provided.
     """
     v = J.dot(s)
-    a = np.dot(v, v)
-    if diag is not None:
-        a += np.dot(s * diag, s)
-    a *= 0.5
-
+    a = 0.5 * np.dot(v, v)
     b = np.dot(g, s)
 
-    if s0 is not None:
-        u = J.dot(s0)
-        b += np.dot(u, v)
-        c = 0.5 * np.dot(u, u) + np.dot(g, s0)
-        if diag is not None:
-            b += np.dot(s0 * diag, s)
-            c += 0.5 * np.dot(s0 * diag, s0)
-        return a, b, c
-    else:
-        return a, b
+    return a, b
 
 
-def minimize_quadratic_1d(a, b, lb, ub, c=0):
+def minimize_quadratic_1d(a, b, lb, ub):
     """Minimize a 1-D quadratic function subject to bounds.
 
-    The free term `c` is 0 by default. Bounds must be finite.
+    Bounds must be finite.
 
     Returns
     -------
@@ -166,7 +145,7 @@ def minimize_quadratic_1d(a, b, lb, ub, c=0):
         if lb < extremum < ub:
             t.append(extremum)
     t = np.asarray(t)
-    y = t * (a * t + b) + c
+    y = t * (a * t + b)
     min_index = np.argmin(y)
     return t[min_index], y[min_index]
 
@@ -255,6 +234,8 @@ def dogbox(fun, jac, x0, ftol, xtol, gtol, max_nfev, x_scale, verbose):
             break
 
         # Compute (Gauss-)Newton and build quadratic model for Cauchy step.
+        # rcond=-1 means that all singular values above machine precision are retained.
+        # The [0] picks out the solution from the tuple of (solution, residuals, rank, singular_values)
         newton_step = lstsq(J, -f, rcond=-1)[0]
 
         # Coefficients for the quadratic model along the anti-gradient.
